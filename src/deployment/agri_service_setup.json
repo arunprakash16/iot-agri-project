@@ -1,0 +1,480 @@
+{
+    "AWSTemplateFormatVersion": "2010-09-09",
+    "Description": "IAM Role, EC2 Profile, EC2 SG, EC2 VPC, EC2 Instance, S3, Lambda Hnadler, DynamoDB Table, Kinesis Stream, SNS Topic & Subscription",
+    "Parameters": {
+        "HCInstanceType": {
+            "Description": "WebServer EC2 instance type",
+            "Type": "String",
+            "Default": "t2.micro",
+			"AllowedValues": ["t2.micro", "t2.nano"]
+        },
+        "InstanceAMI": {
+            "Description": "EC2 instance AMI",
+            "Type": "String",
+            "Default": "ami-0f9cf087c1f27d9b1"
+        },
+        "InstanceKeyName": {
+            "Description": "Name of an existing EC2 key pair - will list all the values in the stack option",
+            "Type": "AWS::EC2::KeyPair::KeyName",
+            "ConstraintDescription": "Must be the name of an existing EC2 key pair"
+        },
+		"KinesisRawTopicName": {
+			"Description": "Kinesis Stream Name",
+            "Type": "String",
+            "Default": "m03p02_raw_data_stream"
+		},
+		"KinesisRawTopicShard": {
+			"Description": "Kinesis Stream's Number of Shard(S)",
+            "Type": "Number",
+            "Default": "1",
+			"MinValue": "1",
+			"MaxValue": "5"
+		},
+		"DynamoAnomalyTbName": {
+			"Description": "Dynamo DB Table Name",
+            "Type": "String",
+            "Default": "m03p02_anomaly_data"
+		},
+		"SNSAnomalyAlertTopicName": {
+			"Description": "SNS Topic Name",
+            "Type": "String",
+            "Default": "m03p02_anomaly_alerts"
+		},
+		"SNSAnomalyAlertTopicDispName": {
+			"Description": "SNS Topic Display Name",
+            "Type": "String",
+            "Default": "HealthCareTopic"
+		},
+		"SNSAnomalyAlertSubEndpoint": {
+			"Description": "SNS Subscription Endpoint",
+            "Type": "String",
+            "Default": "aruncloudworks@proton.me"
+		},
+		"SNSAnomalyAlertSubProtocol": {
+			"Description": "SNS Subscription Protocol",
+            "Type": "String",
+            "Default": "email"
+		},
+		"S3BucketName": {
+			"Description": "S3 Bucket Name",
+            "Type": "String",
+            "Default": "m03p02-healthcare"
+		},
+		"LambdaFnName": {
+			"Description": "Lambda Function Name",
+            "Type": "String",
+            "Default": "Anomaly_detector_CF"
+		},
+		"LambdaRuntime": {
+			"Description": "Lambda Runtime",
+            "Type": "String",
+            "Default": "python3.9"
+		},
+		"LambdaBatchSize": {
+			"Description": "Lambda Batch Size",
+            "Type": "Number",
+            "Default": "100",
+			"MinValue": "50",
+			"MaxValue": "500"
+		},
+		"LambdaBatchWindowSeconds": {
+			"Description": "Lambda Batch window time in seconds",
+            "Type": "Number",
+            "Default": "10",
+			"MinValue": "5",
+			"MaxValue": "300"
+		},
+		"LambdaKinesisStartingPosition": {
+			"Description": "Lambda Kinesis Starting position",
+            "Type": "String",
+            "Default": "LATEST ",
+			"AllowedValues": ["LATEST", "TRIM_HORIZON", "AT_TIMESTAMP"]
+		}
+    },
+    "Resources": {
+        "ECRole": {
+            "Type": "AWS::IAM::Role",
+            "Properties": {
+                "AssumeRolePolicyDocument": {
+                    "Version": "2012-10-17",
+                    "Statement": [
+                        {
+                            "Effect": "Allow",
+                            "Principal": {
+                                "Service": [
+                                    "ec2.amazonaws.com"
+                                ]
+                            },
+                            "Action": [
+                                "sts:AssumeRole"
+                            ]
+                        }
+                    ]
+                },
+                "Path": "/",
+                "Policies": [
+                    {
+                        "PolicyName": "ECUser",
+                        "PolicyDocument": {
+                            "Version": "2012-10-17",
+                            "Statement": [
+                                {
+                                    "Effect": "Allow",
+                                    "Action": [
+                                        "logs:*",
+                                        "kinesis:DescribeStream",
+                                        "kinesis:ListStreams",
+                                        "kinesis:PutRecord",
+										"cloudformation:*",
+										"s3:Get*",
+										"s3:List*"
+                                    ],
+                                    "Resource": "*"
+                                }
+                            ]
+                        }
+                    }
+                ]
+            }
+        },
+        "EC2IAMProfile": {
+            "Type": "AWS::IAM::InstanceProfile",
+            "Properties": {
+                "Path": "/",
+                "Roles": [
+                    {
+                        "Ref": "ECRole"
+                    }
+                ]
+            }
+        },
+        "LambdaRole": {
+            "Type": "AWS::IAM::Role",
+            "Properties": {
+                "AssumeRolePolicyDocument": {
+                    "Version": "2012-10-17",
+                    "Statement": [
+                        {
+                            "Effect": "Allow",
+                            "Principal": {
+                                "Service": [
+                                    "lambda.amazonaws.com"
+                                ]
+                            },
+                            "Action": [
+                                "sts:AssumeRole"
+                            ]
+                        }
+                    ]
+                },
+                "Path": "/",
+                "Policies": [
+                    {
+                        "PolicyName": "LambdaUser",
+                        "PolicyDocument": {
+                            "Version": "2012-10-17",
+                            "Statement": [
+                                {
+                                    "Effect": "Allow",
+                                    "Action": [
+                                        "logs:*",
+                                        "kinesis:DescribeStream",
+                                        "kinesis:ListStreams",
+                                        "kinesis:GetRecords",
+                                        "kinesis:GetShardIterator",
+                                        "kinesis:ListShards",
+                                        "dynamodb:ListTables",
+                                        "dynamodb:DescribeTable",
+                                        "dynamodb:PutItem",
+                                        "dynamodb:BatchWriteItem",
+                                        "sns:ListTopics",
+										"sns:SetTopicAttributes",
+										"sns:GetTopicAttributes",
+                                        "sns:Publish"
+                                    ],
+                                    "Resource": "*"
+                                }
+                            ]
+                        }
+                    }
+                ]
+            }
+        },
+        "EC2SG39TIL": {
+            "Type": "AWS::EC2::SecurityGroup",
+            "Properties": {
+                "SecurityGroupIngress": [
+                    {
+                        "IpProtocol": "tcp",
+                        "FromPort": 22,
+                        "ToPort": 22,
+                        "CidrIp": "0.0.0.0/0"
+                    }
+                ],
+                "GroupDescription": "Allows SSH",
+                "Tags": [
+                    {
+                        "Key": "Name",
+                        "Value": "EC2SG"
+                    }
+                ]
+            }
+        },
+        "HCEC1": {
+            "Type": "AWS::EC2::Instance",
+            "Properties": {
+                "InstanceType": {
+                    "Ref": "HCInstanceType"
+                },
+                "ImageId": {
+                    "Ref": "InstanceAMI"
+                },
+                "IamInstanceProfile": {
+                    "Ref": "EC2IAMProfile"
+                },
+                "SecurityGroups": [
+                    {"Ref": "EC2SG39TIL"}
+                ],
+                "KeyName": {
+                    "Ref": "InstanceKeyName"
+                },
+                "Tags": [
+                    {
+                        "Key": "Name",
+                        "Value": "Health Care Raw data producer EC2"
+                    }
+                ],
+                "UserData": {
+                    "Fn::Base64": {
+                        "Fn::Join": [
+                            "\n",
+                            [
+                                "#!/bin/bash",
+                                "apt update -y",
+								"apt install ruby-full",
+								"apt install wget",
+								"cd /home/ubuntu",
+                                "wget https://aws-codedeploy-us-east-1.s3.us-east-1.amazonaws.com/latest/install",
+                                "chmod +x ./install",
+                                "./install auto"
+                            ]
+                        ]
+                    }
+                }
+            }
+        },
+		"HCKinesis1": {
+            "Type": "AWS::Kinesis::Stream",
+            "Properties": {
+                "Name": {
+					"Ref": "KinesisRawTopicName"
+				},
+				"ShardCount": {
+					"Ref": "KinesisRawTopicShard"
+				},
+                "Tags": [
+                    {
+                        "Key": "Name",
+                        "Value": "Health Care Raw data topic"
+                    }
+                ]
+            }
+        },
+		"HCDynamoDB1": {
+            "Type": "AWS::DynamoDB::Table",
+            "Properties": {
+                "AttributeDefinitions": [
+					{
+						"AttributeName" : "deviceid",
+						"AttributeType" : "S"
+					},
+					{
+						"AttributeName" : "timestamp",
+						"AttributeType" : "S"
+					}],
+				"KeySchema": [
+					{
+						"AttributeName" : "deviceid",
+						"KeyType" : "HASH"
+					},
+					{
+						"AttributeName" : "timestamp",
+						"KeyType" : "RANGE"
+					}
+				],
+                "TableName": {
+					"Ref": "DynamoAnomalyTbName"
+				},
+                "Tags": [
+                    {
+                        "Key": "Name",
+                        "Value": "Health Care Anomaly DynamoDB table"
+                    }
+                ],
+                "ProvisionedThroughput": {
+                    "ReadCapacityUnits": 1,
+					"WriteCapacityUnits": 1
+				}
+            }
+        },
+		"HCSNS1": {
+            "Type": "AWS::SNS::Topic",
+            "Properties": {
+                "DisplayName": {
+					"Ref": "SNSAnomalyAlertTopicDispName"
+				},
+				"TopicName": {
+					"Ref": "SNSAnomalyAlertTopicName"
+				},
+                "FifoTopic": false,
+                "Subscription": [
+                    {
+                        "Endpoint": {
+							"Ref": "SNSAnomalyAlertSubEndpoint"
+						},
+                        "Protocol": {
+							"Ref": "SNSAnomalyAlertSubProtocol"
+						}
+                    }
+                ]
+            }
+        },
+		"HCS3": {
+            "Type": "AWS::S3::Bucket",
+			"DeletionPolicy": "Retain",
+            "Properties": {
+                "BucketName": {
+					"Ref": "S3BucketName"
+				}
+            }
+        },
+		"HCLambda": {
+            "Type": "AWS::Lambda::Function",
+            "Properties": {
+				"FunctionName": "LambdaFnName",
+                "Runtime": {
+					"Ref": "LambdaRuntime"
+				},
+				"Role": {
+					"Fn::GetAtt" : [ "LambdaRole", "Arn" ]
+				},
+				"Handler": "index.lambda_handler",
+				"Code": {
+					"ZipFile": { "Fn::Join": [
+                            "\n",
+                            [
+                                "import json",
+                                "def lambda_handler(event, context):",
+								"    # TODO implement",
+								"    return {",
+								"        'statusCode': 200,",
+                                "        'body': json.dumps('Hello from Lambda!')",
+                                "    }"
+                            ]
+                        ]
+					}
+				}
+            }
+        },
+		"HCLambdaKinesisEventMapping": {
+            "Type": "AWS::Lambda::EventSourceMapping",
+            "Properties": {
+				"EventSourceArn": {
+					"Fn::GetAtt" : [ "HCKinesis1", "Arn" ]
+				},
+                "FunctionName": {
+					"Fn::GetAtt" : [ "HCLambda", "Arn" ]
+				},
+				"BatchSize": {
+					"Ref": "LambdaBatchSize"
+				},
+				"MaximumBatchingWindowInSeconds": {
+					"Ref": "LambdaBatchWindowSeconds"
+				},
+				"StartingPosition": {
+					"Ref": "LambdaKinesisStartingPosition"
+				}
+            }
+        }
+    },
+    "Outputs": {
+        "InstanceId": {
+            "Description": "EC2 Instance Id",
+            "Value": {
+                "Ref": "HCEC1"
+            }
+        },
+		"EC2PublicIP": {
+            "Description": "EC2 Public IP",
+            "Value": {
+                "Fn::GetAtt" : [ "HCEC1", "PublicIp" ]
+            }
+        },
+		"EC2PrivateIp": {
+            "Description": "EC2 Private IP",
+            "Value": {
+                "Fn::GetAtt" : [ "HCEC1", "PrivateIp" ]
+            }
+        },
+		"KinesisRef": {
+            "Description": "Kinesis Reference",
+            "Value": {
+                "Ref": "HCKinesis1"
+            }
+        },
+		"KinesisArn": {
+            "Description": "Kinesis Reference",
+            "Value": {
+                "Fn::GetAtt" : [ "HCKinesis1", "Arn" ]
+            }
+        },
+		"DynamoRef": {
+            "Description": "DynamoDB Reference",
+            "Value": {
+                "Ref": "HCDynamoDB1"
+            }
+        },
+		"DynamoARN": {
+            "Description": "DynamoDB ARN",
+            "Value": {
+                "Fn::GetAtt" : [ "HCDynamoDB1", "Arn" ]
+            }
+        },
+		"SNSRef": {
+            "Description": "SNS Reference",
+            "Value": {
+                "Ref": "HCSNS1"
+            }
+        },
+		"S3Ref": {
+            "Description": "S3 Reference",
+            "Value": {
+                "Ref": "HCS3"
+            }
+        },
+		"S3Arn": {
+            "Description": "S3 Arn",
+            "Value": {
+                "Fn::GetAtt" : [ "HCS3", "Arn" ]
+            }
+        },
+		"S3Url": {
+            "Description": "S3 Website URL",
+            "Value": {
+                "Fn::GetAtt" : [ "HCS3", "WebsiteURL" ]
+            }
+        },
+		"LambdaArn": {
+            "Description": "Lambda Function ARN",
+            "Value": {
+                "Fn::GetAtt" : [ "HCLambda", "Arn" ]
+            }
+        },
+		"LambdaKinesisMappingId": {
+            "Description": "Returns Lambda Kinesis Mapping Function ID",
+            "Value": {
+                "Ref": "HCLambdaKinesisEventMapping"
+            }
+        }
+    }
+}
